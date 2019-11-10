@@ -3,7 +3,7 @@ from tensorflow.keras import Model
 from tensorflow.keras.layers import Dense, Flatten, Conv2D, MaxPooling2D, UpSampling2D
 
 class convolutional_auto_encoder(Model):
-    def __init__(self, scope):
+    def __init__(self):
         super(convolutional_auto_encoder, self).__init__()
         self.conv1 = Conv2D(32, 3, activation='relu', padding='SAME')
         self.pool2 = MaxPooling2D(2, 2)
