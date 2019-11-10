@@ -43,8 +43,8 @@ def create_dataset(threshold):
     train_dir = 'UCSD_Anomaly_Dataset.v1p2/UCSDped2/Train/'
     result_dir = 'detected_images'
     data = []
-    data_before = []
-    data_after = []
+    gradient_former = []
+    gradient_later = []
     with tf.Session(graph=graph) as sess:
         for dirname in sorted(os.listdir(train_dir)):
             basename = os.path.basename(dirname)
@@ -57,10 +57,10 @@ def create_dataset(threshold):
                     not os.path.exists(os.path.join(train_dir, dirname, '%03d.tif' % (int(name[:3])+2)))):
                     continue
                 im = Image.open(fp)
-                im_before = Image.open(os.path.join(train_dir, dirname, '%03d.tif' % (int(name[:3])-2))).convert('L')
-                im_after = Image.open(os.path.join(train_dir, dirname, '%03d.tif' % (int(name[:3])+2))).convert('L')
-                im_before = np.array(im_before)
-                im_after = np.array(im_after)
+                im_former = Image.open(os.path.join(train_dir, dirname, '%03d.tif' % (int(name[:3])-2))).convert('L')
+                im_later = Image.open(os.path.join(train_dir, dirname, '%03d.tif' % (int(name[:3])+2))).convert('L')
+                im_former = np.array(im_former)
+                im_later = np.array(im_later)
                 im_org = im.copy()
                 im_org = np.array(im_org.convert('L'))
                 img = im.convert('RGB')
@@ -77,20 +77,23 @@ def create_dataset(threshold):
                         xmax = int(width * boxes[i][3])
                         ymax = int(height * boxes[i][2])
                         im_copy = im_org.copy()
-                        im_copy_before = im_before.copy()
-                        im_copy_after = im_after.copy()
+                        im_copy_former = im_former.copy()
+                        im_copy_later = im_later.copy()
                         im = Image.fromarray(im_copy[ymin:ymax, xmin:xmax])
                         im = np.array(im.resize((64, 64), Image.LANCZOS))
-                        im_copy_before = Image.fromarray(im_copy_before[ymin:ymax, xmin:xmax])
-                        im_copy_before = im_copy_before.resize((64, 64), Image.LANCZOS)
-                        im_copy_before = np.array(im_copy_before)
-                        im_copy_after = Image.fromarray(im_copy_after[ymin:ymax, xmin:xmax])
-                        im_copy_after = im_copy_after.resize((64, 64), Image.LANCZOS)
-                        im_copy_after = np.array(im_copy_after)
+                        im_copy_former = Image.fromarray(im_copy_former[ymin:ymax, xmin:xmax])
+                        im_copy_former = im_copy_former.resize((64, 64), Image.LANCZOS)
+                        im_copy_former = np.array(im_copy_former)
+                        im_copy_later = Image.fromarray(im_copy_later[ymin:ymax, xmin:xmax])
+                        im_copy_later = im_copy_later.resize((64, 64), Image.LANCZOS)
+                        im_copy_later = np.array(im_copy_later)                        
                         data.append(im)
-                        data_before.append(im_copy_before)
-                        data_after.append(im_copy_after)
-    return np.array(data), np.array(data_before), np.array(data_after)
+                        im_grad = cv2.Laplacian(im.copy(), cv2.CV_32F, ksize=3)
+                        former_grad = cv2.Laplacian(im_copy_former.copy(), cv2.CV_32F, ksize=3)
+                        later_grad = cv2.Laplacian(im_copy_later.copy(), cv2.CV_32F, ksize=3)
+                        gradient_former.append()
+                        gradient_later.append()
+    return np.array(data), np.array(gradient_former), np.array(gradient_later)
 
 
 if __name__ == '__main__':
