@@ -12,6 +12,14 @@ def train_step(model, train_loss, optimizer, image, label):
     train_loss(loss)
 
 
+def create_dataset(image_dir, delta):
+
+    i = 0
+    while os.path.exists():
+        
+        i += 1
+
+
 if __name__ == '__main__':
     model_appearance = convolutional_auto_encoder()
     model_motion1 = convolutional_auto_encoder()
@@ -21,6 +29,7 @@ if __name__ == '__main__':
     train_loss = tf.keras.metrics.Mean(name='train_loss')
 
     EPOCHS = 5
+    delta = 2
 
     for epoch in range(EPOCHS):
         for image, label in train_ds:
