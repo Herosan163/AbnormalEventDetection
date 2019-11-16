@@ -12,19 +12,33 @@ class convolutional_auto_encoder(Model):
         self.conv5 = Conv2D(16, 3, activation='relu', padding='SAME')
         self.pool6 = MaxPooling2D(2, 2)
         self.conv7 = Conv2D(16, 3, activation='relu', padding='SAME')
-        self.upsamle8 = UpSampling2D(2, interpolation='nearest')
+        self.upsample8 = UpSampling2D(2, interpolation='nearest')
         self.conv9 = Conv2D(32, 3, activation='relu', padding='SAME')
-        self.upsamle10 = UpSampling2D(2, interpolation='nearest')
+        self.upsample10 = UpSampling2D(2, interpolation='nearest')
         self.conv11 = Conv2D(32, 3, activation='relu', padding='SAME')
-        self.upsamle12 = UpSampling2D(2, interpolation='nearest')
+        self.upsample12 = UpSampling2D(2, interpolation='nearest')
         self.conv13 = Conv2D(1, 3, padding='SAME')
 
-    def __call__(self, x, is_training):
-        encoded_feature = self.encode(x)
-        decoded_featrue = self.decode(x)
-        return encoded_feature, decoded_featrue
+    @tf.function
+    def calc_loss(self, x):
+        x = tf.cast(x, tf.float32)
+        x = x / 255.0
+        decode = self(x)        
+        loss = tf.reduce_mean(tf.square(x - decode))
+        return loss
 
+    @tf.function
+    def call(self, x):
+        x = tf.cast(x, tf.float32)
+        x = x / 255.0
+        encoded_feature = self.encode(x)
+        decoded_featrue = self.decode(encoded_feature)
+        return decoded_featrue
+
+    @tf.function
     def encode(self, x):
+        x = tf.cast(x, tf.float32)
+        x = x / 255.0
         x = self.conv1(x)
         x = self.pool2(x)
         x = self.conv3(x)
@@ -42,7 +56,3 @@ class convolutional_auto_encoder(Model):
         x = self.upsample12(x)
         x = self.conv13(x)
         return x
-        
-
-    
-    

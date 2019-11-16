@@ -3,30 +3,25 @@ import tensorflow as tf
 from model import convolutional_auto_encoder
 import os
 from PIL import Image
+import cv2
+import argparse
+import pickle
 
 def load_graph(frozen_graph_filename):
-    # We load the protobuf file from the disk and parse it to retrieve the 
-    # unserialized graph_def
     with tf.gfile.GFile(frozen_graph_filename, "rb") as f:
         graph_def = tf.GraphDef()
         graph_def.ParseFromString(f.read())
-
-    # Then, we import the graph_def into a new Graph and returns it 
     with tf.Graph().as_default() as graph:
-        # The name var will prefix every op/nodes in your graph
-        # Since we load everything in a new graph, this is not needed
         tf.import_graph_def(graph_def, name='ssd')
     return graph
 
 
-@tf.function
 def train_step(model, train_loss, optimizer, image):
     with tf.GradientTape() as tape:
-        encode, decode = model(image)
-        loss = tf.reduce_mean(tf.square(image - decode))
+        loss = model.calc_loss(image)
     gradients = tape.gradient(loss, model.trainable_variables)
     optimizer.apply_gradients(zip(gradients, model.trainable_variables))
-    train_loss(loss)
+    return loss
 
 
 def create_dataset(threshold):
@@ -91,49 +86,81 @@ def create_dataset(threshold):
                         im_grad = cv2.Laplacian(im.copy(), cv2.CV_32F, ksize=3)
                         former_grad = cv2.Laplacian(im_copy_former.copy(), cv2.CV_32F, ksize=3)
                         later_grad = cv2.Laplacian(im_copy_later.copy(), cv2.CV_32F, ksize=3)
-                        gradient_former.append()
-                        gradient_later.append()
+                        gradient_former.append(im_grad + former_grad)
+                        gradient_later.append(later_grad + im_grad)
     return np.array(data), np.array(gradient_former), np.array(gradient_later)
 
 
+def get_args():
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-lr', '--learning_rate', type=float)
+    parser.add_argument('-e', '--epoch', type=int, default=0)
+    parser.add_argument('-rd', '--result_directory', type=str, default=None)
+    return parser.parse_args()
+
 if __name__ == '__main__':
 
+    args = get_args()
+    if not os.path.exists(args.result_directory):
+        os.mkdir(args.result_directory)
     threshold = 0.5
     batch_size = 64
     shuffle_buffer_size = 100
-    # data, data_before, data_after = create_dataset(threshold)
+    # data, grad_former, grad_later = create_dataset(threshold)
     # np.save('data.npy', data)
-    # np.save('data_before.npy', data_before)
-    # np.save('data_after.npy', data_after)
+    # np.save('grad_former.npy', grad_former)
+    # np.save('grad_later.npy', grad_later)
     data = np.load('data.npy')
-    data_before = np.load('data_before.npy')
-    data_after = np.load('data_after.npy')
-    train_ds = tf.data.Dataset.from_tensor_slices((data, data_before, data_after)).shuffle(shuffle_buffer_size).batch(batch_size)
+    grad_former = np.load('grad_former.npy')
+    grad_later = np.load('grad_later.npy')
+    data = np.expand_dims(data, axis=-1)
+    grad_former = np.expand_dims(grad_former, axis=-1)
+    grad_later = np.expand_dims(grad_later, axis=-1)
+    train_ds = tf.data.Dataset.from_tensor_slices((data, grad_former, grad_later)).shuffle(shuffle_buffer_size).batch(batch_size)
     model_appearance = convolutional_auto_encoder()
     model_motion1 = convolutional_auto_encoder()
     model_motion2 = convolutional_auto_encoder()
-    loss_object = tf.keras.losses.MSE()
-    optimizer = tf.keras.optimizers.Adam()
+    loss_object = tf.keras.losses.MSE
+    optimizer = tf.keras.optimizers.Adam(learning_rate=args.learning_rate)
     train_loss = tf.keras.metrics.Mean(name='train_loss')
-    loss_object2 = tf.keras.losses.MSE()
-    optimizer2 = tf.keras.optimizers.Adam()
+    loss_object2 = tf.keras.losses.MSE
+    optimizer2 = tf.keras.optimizers.Adam(learning_rate=args.learning_rate)
     train_loss2 = tf.keras.metrics.Mean(name='train_loss')
-    loss_object3 = tf.keras.losses.MSE()
-    optimizer3 = tf.keras.optimizers.Adam()
+    loss_object3 = tf.keras.losses.MSE
+    optimizer3 = tf.keras.optimizers.Adam(learning_rate=args.learning_rate)
     train_loss3 = tf.keras.metrics.Mean(name='train_loss')
 
-    EPOCHS = 5
+    EPOCHS = args.epoch
     delta = 2
-
+    best_loss1 = 10000000
+    best_loss2 = 10000000
+    best_loss3 = 10000000
     for epoch in range(EPOCHS):
+        step = 0
+        loss1_running = 0.
+        loss2_running = 0.
+        loss3_running = 0.
         for img, gradient1, gradient2 in train_ds:
-            train_step(model_appearance, train_loss, optimizer, img.copy())            
-            train_step(model_motion1, train_loss2, optimizer2, img.copy())            
-            train_step(model_motion2, train_loss3, optimizer3, img.copy())            
-
-        template = 'Epoch {}, Loss: {}'
-        print (template.format(epoch+1, train_loss.result()))
-        template = 'Epoch {}, Loss: {}'
-        print (template.format(epoch+1, train_loss2.result()))
-        template = 'Epoch {}, Loss: {}'
-        print (template.format(epoch+1, train_loss3.result()))
+            step += 1
+            loss1 = train_step(model_appearance, train_loss, optimizer, tf.identity(img))
+            loss2 = train_step(model_motion1, train_loss2, optimizer2, tf.identity(gradient1))
+            loss3 = train_step(model_motion2, train_loss3, optimizer3, tf.identity(gradient2))
+            loss1_running += loss1.numpy()
+            loss2_running += loss2.numpy()
+            loss3_running += loss3.numpy()
+        loss1_running /= len(list(train_ds))
+        loss2_running /= len(list(train_ds))
+        loss3_running /= len(list(train_ds))
+        print('loss1_running', loss1_running, 'loss2_running', loss2_running, 'loss3_running', loss3_running)
+        with open(os.path.join(args.result_directory, 'log'), 'a') as f:
+            f.write('loss1_running: ' + str(loss1_running) + ', loss2_running: ' + str(loss2_running) + ', loss3_running: ' + str(loss3_running) + '\n')
+        if best_loss1 > loss1_running:
+            best_loss1 = loss1_running
+            model_appearance.save_weights(os.path.join(args.result_directory, 'model_appearance_best_loss.h5'))
+        if best_loss2 > loss2_running:
+            best_loss2 = loss2_running
+            model_motion1.save_weights(os.path.join(args.result_directory, 'model_motion1_best_loss.h5'))
+        if best_loss3 > loss3_running:
+            best_loss3 = loss3_running
+            model_motion2.save_weights(os.path.join(args.result_directory, 'model_motion2_best_loss.h5'))
