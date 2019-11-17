@@ -38,8 +38,8 @@ def create_dataset(threshold):
     train_dir = 'UCSD_Anomaly_Dataset.v1p2/UCSDped2/Train/'
     result_dir = 'detected_images'
     data = []
-    gradient_former = []
-    gradient_later = []
+    data_former = []
+    data_later = []
     with tf.Session(graph=graph) as sess:
         for dirname in sorted(os.listdir(train_dir)):
             basename = os.path.basename(dirname)
@@ -81,14 +81,11 @@ def create_dataset(threshold):
                         im_copy_former = np.array(im_copy_former)
                         im_copy_later = Image.fromarray(im_copy_later[ymin:ymax, xmin:xmax])
                         im_copy_later = im_copy_later.resize((64, 64), Image.LANCZOS)
-                        im_copy_later = np.array(im_copy_later)                        
+                        im_copy_later = np.array(im_copy_later)
                         data.append(im)
-                        im_grad = cv2.Laplacian(im.copy(), cv2.CV_32F, ksize=3)
-                        former_grad = cv2.Laplacian(im_copy_former.copy(), cv2.CV_32F, ksize=3)
-                        later_grad = cv2.Laplacian(im_copy_later.copy(), cv2.CV_32F, ksize=3)
-                        gradient_former.append(im_grad + former_grad)
-                        gradient_later.append(later_grad + im_grad)
-    return np.array(data), np.array(gradient_former), np.array(gradient_later)
+                        data_former.append(im_copy_former)
+                        data_later.append(im_copy_later)
+    return np.array(data), np.array(data_former), np.array(data_later)
 
 
 def get_args():
@@ -107,17 +104,17 @@ if __name__ == '__main__':
     threshold = 0.5
     batch_size = 64
     shuffle_buffer_size = 100
-    # data, grad_former, grad_later = create_dataset(threshold)
+    # data, data_former, data_later = create_dataset(threshold)
     # np.save('data.npy', data)
-    # np.save('grad_former.npy', grad_former)
-    # np.save('grad_later.npy', grad_later)
+    # np.save('data_former.npy', data_former)
+    # np.save('data_later.npy', data_later)
     data = np.load('data.npy')
-    grad_former = np.load('grad_former.npy')
-    grad_later = np.load('grad_later.npy')
+    data_former = np.load('data_former.npy')
+    data_later = np.load('data_later.npy')
     data = np.expand_dims(data, axis=-1)
-    grad_former = np.expand_dims(grad_former, axis=-1)
-    grad_later = np.expand_dims(grad_later, axis=-1)
-    train_ds = tf.data.Dataset.from_tensor_slices((data, grad_former, grad_later)).shuffle(shuffle_buffer_size).batch(batch_size)
+    data_former = np.expand_dims(data_former, axis=-1)
+    data_later = np.expand_dims(data_later, axis=-1)
+    train_ds = tf.data.Dataset.from_tensor_slices((data, data_former, data_later)).shuffle(shuffle_buffer_size).batch(batch_size)
     model_appearance = convolutional_auto_encoder()
     model_motion1 = convolutional_auto_encoder()
     model_motion2 = convolutional_auto_encoder()
@@ -133,28 +130,31 @@ if __name__ == '__main__':
 
     EPOCHS = args.epoch
     delta = 2
-    best_loss1 = 10000000
-    best_loss2 = 10000000
-    best_loss3 = 10000000
+    best_loss1 = np.inf
+    best_loss2 = np.inf
+    best_loss3 = np.inf
     for epoch in range(EPOCHS):
         step = 0
         loss1_running = 0.
         loss2_running = 0.
         loss3_running = 0.
-        for img, gradient1, gradient2 in train_ds:
+        for img, former, later in train_ds:
             step += 1
-            loss1 = train_step(model_appearance, train_loss, optimizer, tf.identity(img))
-            loss2 = train_step(model_motion1, train_loss2, optimizer2, tf.identity(gradient1))
-            loss3 = train_step(model_motion2, train_loss3, optimizer3, tf.identity(gradient2))
+            img = tf.cast(tf.identity(img), tf.float32)
+            former = tf.cast(tf.identity(former), tf.float32)
+            later = tf.cast(tf.identity(later), tf.float32)
+            loss1 = train_step(model_appearance, train_loss, optimizer, img / 255.0)
+            loss2 = train_step(model_motion1, train_loss2, optimizer2, (img - former) / 255.0)
+            loss3 = train_step(model_motion2, train_loss3, optimizer3, (later - img) / 255.0)
             loss1_running += loss1.numpy()
             loss2_running += loss2.numpy()
             loss3_running += loss3.numpy()
         loss1_running /= len(list(train_ds))
         loss2_running /= len(list(train_ds))
         loss3_running /= len(list(train_ds))
-        print('loss1_running', loss1_running, 'loss2_running', loss2_running, 'loss3_running', loss3_running)
+        print('epoch', epoch, 'loss1', loss1_running, 'loss2', loss2_running, 'loss3', loss3_running)
         with open(os.path.join(args.result_directory, 'log'), 'a') as f:
-            f.write('loss1_running: ' + str(loss1_running) + ', loss2_running: ' + str(loss2_running) + ', loss3_running: ' + str(loss3_running) + '\n')
+            f.write('epoch: ' + str(epoch) + ', loss1: ' + str(loss1_running) + ', loss2: ' + str(loss2_running) + ', loss3: ' + str(loss3_running) + '\n')
         if best_loss1 > loss1_running:
             best_loss1 = loss1_running
             model_appearance.save_weights(os.path.join(args.result_directory, 'model_appearance_best_loss.h5'))

@@ -21,24 +21,18 @@ class convolutional_auto_encoder(Model):
 
     @tf.function
     def calc_loss(self, x):
-        x = tf.cast(x, tf.float32)
-        x = x / 255.0
         decode = self(x)        
         loss = tf.reduce_mean(tf.square(x - decode))
         return loss
 
     @tf.function
     def call(self, x):
-        x = tf.cast(x, tf.float32)
-        x = x / 255.0
         encoded_feature = self.encode(x)
         decoded_featrue = self.decode(encoded_feature)
         return decoded_featrue
 
     @tf.function
     def encode(self, x):
-        x = tf.cast(x, tf.float32)
-        x = x / 255.0
         x = self.conv1(x)
         x = self.pool2(x)
         x = self.conv3(x)
