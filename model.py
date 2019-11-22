@@ -19,19 +19,14 @@ class convolutional_auto_encoder(Model):
         self.upsample12 = UpSampling2D(2, interpolation='nearest')
         self.conv13 = Conv2D(1, 3, padding='SAME')
 
-    @tf.function
-    def calc_loss(self, x):
-        decode = self(x)        
-        loss = tf.reduce_mean(tf.square(x - decode))
-        return loss
+    def extract_feature(self, x):
+        return self.encode(x)
 
-    @tf.function
     def call(self, x):
         encoded_feature = self.encode(x)
         decoded_featrue = self.decode(encoded_feature)
         return decoded_featrue
 
-    @tf.function
     def encode(self, x):
         x = self.conv1(x)
         x = self.pool2(x)
