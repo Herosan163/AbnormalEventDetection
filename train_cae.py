@@ -7,15 +7,57 @@ import cv2
 import argparse
 import pickle
 
+tf.compat.v1.enable_eager_execution()
 
 def load_graph(frozen_graph_filename):
-    with tf.gfile.GFile(frozen_graph_filename, "rb") as f:
-        graph_def = tf.GraphDef()
+    with tf.io.gfile.GFile(frozen_graph_filename, "rb") as f:
+        graph_def = tf.compat.v1.GraphDef()
         graph_def.ParseFromString(f.read())
     with tf.Graph().as_default() as graph:
         tf.import_graph_def(graph_def, name='ssd')
     return graph
 
+@tf.function
+def calc_loss1(model, x):
+    encode = model.encode(x)
+    decode = model.decode(encode)
+    loss = tf.reduce_mean(tf.square(x - decode))
+    return loss
+
+def train_step1(model, train_loss, optimizer, image):
+    with tf.GradientTape() as tape:
+        loss = calc_loss1(model, image)
+    gradients = tape.gradient(loss, model.trainable_variables)
+    optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+    return loss
+
+@tf.function
+def calc_loss2(model, x):
+    encode = model.encode(x)
+    decode = model.decode(encode)
+    loss = tf.reduce_mean(tf.square(x - decode))
+    return loss
+
+def train_step2(model, train_loss, optimizer, image):
+    with tf.GradientTape() as tape:
+        loss = calc_loss2(model, image)
+    gradients = tape.gradient(loss, model.trainable_variables)
+    optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+    return loss
+
+@tf.function
+def calc_loss3(model, x):
+    encode = model.encode(x)
+    decode = model.decode(encode)
+    loss = tf.reduce_mean(tf.square(x - decode))
+    return loss
+
+def train_step3(model, train_loss, optimizer, image):
+    with tf.GradientTape() as tape:
+        loss = calc_loss3(model, image)
+    gradients = tape.gradient(loss, model.trainable_variables)
+    optimizer.apply_gradients(zip(gradients, model.trainable_variables))
+    return loss
 
 def create_dataset(threshold):
 
@@ -109,27 +151,47 @@ if __name__ == '__main__':
     data /= 255.
     data_former /= 255.
     data_later /= 255.
+    train_ds = tf.data.Dataset.from_tensor_slices((data, data_former, data_later)).shuffle(shuffle_buffer_size).batch(batch_size)
     lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
         0.001,
         decay_steps=data.shape[0]//batch_size * 100,
         decay_rate=0.1,
         staircase=True)
-    dummpy = np.zeros((1, 64, 64, 1), dtype=np.float32)
+    
     model_appearance = convolutional_auto_encoder()
     model_motion1 = convolutional_auto_encoder()
     model_motion2 = convolutional_auto_encoder()
+    loss_object = tf.keras.losses.MSE
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
+    train_loss = tf.keras.metrics.Mean(name='train_loss')
+    loss_object2 = tf.keras.losses.MSE
     optimizer2 = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
+    train_loss2 = tf.keras.metrics.Mean(name='train_loss')
+    loss_object3 = tf.keras.losses.MSE
     optimizer3 = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
-    model_appearance.compile(optimizer=optimizer,
-                             loss='mse')
-    model_appearance.fit(data, data, epochs=args.epoch, batch_size=batch_size)
-    model_appearance.save_weights(os.path.join(args.result_directory, 'model_appearance_best_loss.hdf5'))
-    model_motion1.compile(optimizer=optimizer2,
-                          loss='mse')
-    model_motion1.fit(data_former, data_former, epochs=args.epoch, batch_size=batch_size)
-    model_motion1.save_weights(os.path.join(args.result_directory, 'model_motion1_best_loss.hdf5'))
-    model_motion2.compile(optimizer=optimizer3,
-                          loss='mse')
-    model_motion2.fit(data_later, data_later, epochs=args.epoch, batch_size=batch_size)
-    model_motion2.save_weights(os.path.join(args.result_directory, 'model_motion2_best_loss.hdf5'))
+    train_loss3 = tf.keras.metrics.Mean(name='train_loss')
+    
+    EPOCHS = args.epoch
+    delta = 2
+    for epoch in range(EPOCHS):
+        step = 0
+        loss1_running = 0.
+        loss2_running = 0.
+        loss3_running = 0.
+        for img, former, later in train_ds:
+            step += 1
+            loss1 = train_step1(model_appearance, train_loss, optimizer, img)
+            loss2 = train_step2(model_motion1, train_loss2, optimizer2, img - former)
+            loss3 = train_step3(model_motion2, train_loss3, optimizer3, later - img)
+            loss1_running += loss1.numpy()
+            loss2_running += loss2.numpy()
+            loss3_running += loss3.numpy()
+        loss1_running /= len(list(train_ds))
+        loss2_running /= len(list(train_ds))
+        loss3_running /= len(list(train_ds))
+        print('epoch', epoch, 'loss1', loss1_running, 'loss2', loss2_running, 'loss3', loss3_running)
+        with open(os.path.join(args.result_directory, 'log'), 'a') as f:
+            f.write('epoch: ' + str(epoch) + ', loss1: ' + str(loss1_running) + ', loss2: ' + str(loss2_running) + ', loss3: ' + str(loss3_running) + '\n')
+    model_appearance.save_weights(os.path.join(args.result_directory, 'model_appearance.h5'))
+    model_motion1.save_weights(os.path.join(args.result_directory, 'model_motion1.h5'))
+    model_motion2.save_weights(os.path.join(args.result_directory, 'model_motion2.h5'))

@@ -12,9 +12,20 @@ from scipy import signal
 
 tf.compat.v1.enable_eager_execution()
 
+def smooth(x, window_len, weight):
+    smoothed_x = np.zeros((x.shape[0],))
+    for i in range(x.shape[0]):
+        if i < (window_len - 1) //2:
+            smoothed_x[i] = np.dot(x[:i + (window_len - 1)//2 + 1], weight[(window_len - 1)//2 - i:])
+        elif i > x.shape[0] - 3:
+            smoothed_x[i] = np.dot(x[i - (window_len - 1)//2:], weight[:(x.shape[0] - i) + 2])
+        else:
+            smoothed_x[i] = np.dot(x[i - (window_len - 1)//2:i + (window_len - 1)//2 + 1], weight)
+    return smoothed_x
+
 def load_graph(frozen_graph_filename):
-    with tf.gfile.GFile(frozen_graph_filename, "rb") as f:
-        graph_def = tf.GraphDef()
+    with tf.io.gfile.GFile(frozen_graph_filename, "rb") as f:
+        graph_def = tf.compat.v1.GraphDef()
         graph_def.ParseFromString(f.read())
     with tf.Graph().as_default() as graph:
         tf.import_graph_def(graph_def, name='ssd')
@@ -23,13 +34,6 @@ def load_graph(frozen_graph_filename):
 def svm_predict(svm, feature):
     scores = svm.decision_function(feature[None])
     return -np.amax(np.array(scores))
-
-def smooth(x,window_len=11,window='hanning'):
-    s = np.r_[x[window_len-1:0:-1], x, x[-2:-window_len-1:-1]]
-    w = eval('np.'+window+'(window_len)')
-    y = np.convolve(w / w.sum(), s, mode='valid')
-    return y
-
 
 def get_args():
     
@@ -43,41 +47,37 @@ if __name__ == '__main__':
     ssd_threshold = 0.4
     frozen_model_filepath = 'ssd_resnet50_v1_fpn_shared_box_predictor_640x640_coco14_sync_2018_07_03/frozen_inference_graph.pb'
     graph = load_graph(frozen_model_filepath)
-
+    smooth_filter = np.array([0.1, 0.4, 1.0, 0.4, 0.1])
     x = graph.get_tensor_by_name('ssd/image_tensor:0')
     detection_boxes = graph.get_tensor_by_name('ssd/detection_boxes:0')
     detection_scores = graph.get_tensor_by_name('ssd/detection_scores:0')
     detection_classes = graph.get_tensor_by_name('ssd/detection_classes:0')
     num_detections = graph.get_tensor_by_name('ssd/num_detections:0')
-    sess = tf.Session(graph=graph)
+    sess = tf.compat.v1.Session(graph=graph)
     
-    dummpy = np.zeros((1, 64, 64, 1), dtype=np.float32)
+    input_shape = (None, 64, 64, 1)
     model_appearance = convolutional_auto_encoder()
-    model_appearance.compile(loss=tf.keras.losses.MSE,
-                             optimizer=tf.keras.optimizers.Adam())
-    model_appearance.train_on_batch(dummpy, dummpy)
+    model_appearance.build(input_shape)
     model_motion1 = convolutional_auto_encoder()
-    model_motion1.compile(loss=tf.keras.losses.MSE,
-                          optimizer=tf.keras.optimizers.Adam())
-    model_motion1.train_on_batch(dummpy, dummpy)
+    model_motion1.build(input_shape)
     model_motion2 = convolutional_auto_encoder()
-    model_motion2.compile(loss=tf.keras.losses.MSE,
-                          optimizer=tf.keras.optimizers.Adam())
-    model_motion2.train_on_batch(dummpy, dummpy)
-    model_appearance.load_weights(os.path.join(args.result_directory, 'model_appearance_best_loss.hdf5'))
-    model_motion1.load_weights(os.path.join(args.result_directory, 'model_motion1_best_loss.hdf5'))
-    model_motion2.load_weights(os.path.join(args.result_directory, 'model_motion2_best_loss.hdf5'))
+    model_motion2.build(input_shape)
+    model_appearance.load_weights(os.path.join(args.result_directory, 'model_appearance.h5'))
+    model_motion1.load_weights(os.path.join(args.result_directory, 'model_motion1.h5'))
+    model_motion2.load_weights(os.path.join(args.result_directory, 'model_motion2.h5'))
+    model_appearance = convolutional_auto_encoder()
 
     svm = load(os.path.join(args.result_directory, 'svm.pickle'))
 
-    test_dir = 'UCSD_Anomaly_Dataset.v1p2/UCSDped2/Test/'
+    test_dir = '../UCSD_Anomaly_Dataset.v1p2/UCSDped2/Test/'
     result_dir = 'detected_images'
-    frame_scores = []
+    frame_scores = np.empty((0,))
     frame_gt = []
     for dirname in sorted(os.listdir(test_dir)):
         basename = os.path.basename(dirname)
         if not basename[:4] == 'Test':
             continue
+        smooth_scores = []
         for fn in sorted(os.listdir(os.path.join(test_dir, dirname))):
             fp = os.path.join(test_dir, dirname, fn)
             name, ext = os.path.splitext(fn)
@@ -129,20 +129,22 @@ if __name__ == '__main__':
                     img = tf.cast(tf.identity(np.expand_dims(im, axis=-1)), tf.float32)
                     former = tf.cast(tf.identity(np.expand_dims(im_copy_former, axis=-1)), tf.float32)
                     later = tf.cast(tf.identity(np.expand_dims(im_copy_later, axis=-1)), tf.float32)
-                    encode_appearance = model_appearance.encode(img[None] / 255.0).numpy()
-                    encode_motion1 = model_motion1.encode((img - former)[None] / 255.0).numpy()
-                    encode_motion2 = model_motion2.encode((later - img)[None] / 255.0).numpy()
+                    encode_appearance = model_appearance.extract_feature(img[None] / 255.0).numpy()
+                    encode_motion1 = model_motion1.extract_feature((img - former)[None] / 255.0).numpy()
+                    encode_motion2 = model_motion2.extract_feature((later - img)[None] / 255.0).numpy()
                     feature = np.r_[encode_appearance.flatten(), encode_motion1.flatten(), encode_motion2.flatten()]
                     score = svm_predict(svm, feature)
                     if frame_score < score:
                         frame_score = score
-            frame_scores.append(frame_score)
+            smooth_scores.append(frame_score)
             print(frame_class, frame_score)
+        smooth_scores = smooth(np.array(smooth_scores), 5, smooth_filter)
+        frame_scores = np.r_[frame_scores, smooth_scores]
     frame_scores = np.array(frame_scores)
     # np.save('frame_scores.npy', frame_scores)
     frame_gt = np.array(frame_gt)
-    # np.save('frame_gt.npy', frame_gt)
-    frame_scores = np.load('frame_scores.npy')
+    np.save('frame_gt.npy', frame_gt)
+    # frame_scores = np.load('frame_scores.npy')
     # frame_gt = np.load('frame_gt.npy')
     print(frame_scores.shape, frame_gt.shape)
     # frame_scores = smooth(frame_scores)
