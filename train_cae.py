@@ -24,7 +24,7 @@ def calc_loss1(model, x):
     loss = tf.reduce_mean(tf.square(x - decode))
     return loss
 
-def train_step1(model, train_loss, optimizer, image):
+def train_step1(model, optimizer, image):
     with tf.GradientTape() as tape:
         loss = calc_loss1(model, image)
     gradients = tape.gradient(loss, model.trainable_variables)
@@ -38,7 +38,7 @@ def calc_loss2(model, x):
     loss = tf.reduce_mean(tf.square(x - decode))
     return loss
 
-def train_step2(model, train_loss, optimizer, image):
+def train_step2(model, optimizer, image):
     with tf.GradientTape() as tape:
         loss = calc_loss2(model, image)
     gradients = tape.gradient(loss, model.trainable_variables)
@@ -52,7 +52,7 @@ def calc_loss3(model, x):
     loss = tf.reduce_mean(tf.square(x - decode))
     return loss
 
-def train_step3(model, train_loss, optimizer, image):
+def train_step3(model, optimizer, image):
     with tf.GradientTape() as tape:
         loss = calc_loss3(model, image)
     gradients = tape.gradient(loss, model.trainable_variables)
@@ -71,8 +71,7 @@ def create_dataset(threshold):
     num_detections = graph.get_tensor_by_name('ssd/num_detections:0')
     sess = tf.Session(graph=graph)
 
-    train_dir = 'UCSD_Anomaly_Dataset.v1p2/UCSDped2/Train/'
-    result_dir = 'detected_images'
+    train_dir = '../UCSD_Anomaly_Dataset.v1p2/UCSDped2/Train/'
     data = []
     data_former = []
     data_later = []
@@ -83,22 +82,22 @@ def create_dataset(threshold):
         for fn in sorted(os.listdir(os.path.join(train_dir, dirname))):
             fp = os.path.join(train_dir, dirname, fn)
             name, ext = os.path.splitext(fn)
-            if (not ext == '.tif' or int(name[:3]) < 3 or
-                not os.path.exists(os.path.join(train_dir, dirname, '%03d.tif' % (int(name[:3])+2)))):
+            if (not ext == '.tif' or int(name[:3]) < 4 or
+                not os.path.exists(os.path.join(train_dir, dirname, '%03d.tif' % (int(name[:3])+3)))):
                 continue
-            im = Image.open(fp)
-            im_former = Image.open(os.path.join(train_dir, dirname, '%03d.tif' % (int(name[:3])-2))).convert('L')
-            im_later = Image.open(os.path.join(train_dir, dirname, '%03d.tif' % (int(name[:3])+2))).convert('L')
-            im_former = np.array(im_former)
-            im_later = np.array(im_later)
-            im_org = im.copy()
-            im_org = np.array(im_org.convert('L'))
-            img = im.convert('RGB')
-            img = np.array(img.resize((600, 600), Image.LANCZOS))
+            img = Image.open(fp)
+            img_org = img.copy()
+            gray = np.array(img.convert('L'))
+            former = Image.open(os.path.join(train_dir, dirname, '%03d.tif' % (int(name[:3])-3))).convert('L')
+            later = Image.open(os.path.join(train_dir, dirname, '%03d.tif' % (int(name[:3])+3))).convert('L')
+            former = np.array(former)
+            later = np.array(later)
+            img_rgb = img_org.convert('RGB')
+            img_rgb = np.array(img_rgb.resize((640, 640), Image.BILINEAR))
             boxes, scores, classes, num = sess.run([detection_boxes, detection_scores, detection_classes, num_detections],
-                                                   feed_dict={x: img[None]})
+                                                   feed_dict={x: img_rgb[None]})
             boxes, scores, classes = boxes[0], scores[0], classes[0]
-            height, width = im_org.shape
+            height, width = gray.shape
             print(fp)
             for i, sc in enumerate(scores):
                 if sc > threshold:
@@ -106,22 +105,35 @@ def create_dataset(threshold):
                     ymin = int(height * boxes[i][0])
                     xmax = int(width * boxes[i][3])
                     ymax = int(height * boxes[i][2])
-                    im_copy = im_org.copy()
-                    im_copy_former = im_former.copy()
-                    im_copy_later = im_later.copy()
-                    im = Image.fromarray(im_copy[ymin:ymax, xmin:xmax])
-                    im = np.array(im.resize((64, 64), Image.LANCZOS))
-                    im_copy_former = Image.fromarray(im_copy_former[ymin:ymax, xmin:xmax])
-                    im_copy_former = im_copy_former.resize((64, 64), Image.LANCZOS)
-                    im_copy_former = np.array(im_copy_former)
-                    im_copy_later = Image.fromarray(im_copy_later[ymin:ymax, xmin:xmax])
-                    im_copy_later = im_copy_later.resize((64, 64), Image.LANCZOS)
-                    im_copy_later = np.array(im_copy_later)
+                    gray_copy = gray.copy()
+                    former_copy = former.copy()
+                    later_copy = later.copy()
+                    im = Image.fromarray(gray_copy[ymin:ymax, xmin:xmax])
+                    im = im.resize((64, 64), Image.BILINEAR)
+                    im = np.array(im)
+                    former_copy = Image.fromarray(former_copy[ymin:ymax, xmin:xmax])
+                    former_copy = former_copy.resize((64, 64), Image.BILINEAR)
+                    former_copy = np.array(former_copy)
+                    later_copy = Image.fromarray(later_copy[ymin:ymax, xmin:xmax])
+                    later_copy = later_copy.resize((64, 64), Image.BILINEAR)
+                    later_copy = np.array(later_copy)
                     data.append(im)
-                    data_former.append(im_copy_former)
-                    data_later.append(im_copy_later)
+                    data_former.append(former_copy)
+                    data_later.append(later_copy)
     return np.array(data), np.array(data_former), np.array(data_later)
 
+
+def create_gradient(data, data_former, data_later):
+
+    grad1 = []
+    grad2 = []
+    data = data.astype(np.float32)
+    data_former = data_former.astype(np.float32)
+    data_later = data_later.astype(np.float32)
+    for i in range(data.shape[0]):
+        grad1.append(data[i] - data_former[i])
+        grad2.append(data_later[i] - data[i])
+    return data, np.array(grad1), np.array(grad2)
 
 def get_args():
     
@@ -138,60 +150,55 @@ if __name__ == '__main__':
     threshold = 0.5
     batch_size = 64
     shuffle_buffer_size = 100
-    # data, data_former, data_later = create_dataset(threshold)
+    data, data_former, data_later = create_dataset(threshold)
     # np.save('data.npy', data)
     # np.save('data_former.npy', data_former)
     # np.save('data_later.npy', data_later)
-    data = np.load('data.npy')
-    data_former = np.load('data_former.npy')
-    data_later = np.load('data_later.npy')
-    data = np.expand_dims(data, axis=-1).astype(np.float32)
-    data_former = np.expand_dims(data_former, axis=-1).astype(np.float32)
-    data_later = np.expand_dims(data_later, axis=-1).astype(np.float32)
+    # data = np.load('data.npy')
+    # data_former = np.load('data_former.npy')
+    # data_later = np.load('data_later.npy')
+    data, former_grad, later_grad = create_gradient(data, data_former, data_later)
+    data = np.expand_dims(data, axis=-1)
+    former_grad = np.expand_dims(former_grad, axis=-1)
+    later_grad = np.expand_dims(later_grad, axis=-1)
     data /= 255.
-    data_former /= 255.
-    data_later /= 255.
-    train_ds = tf.data.Dataset.from_tensor_slices((data, data_former, data_later)).shuffle(shuffle_buffer_size).batch(batch_size)
+    former_grad /= 255.
+    later_grad /= 255.
+    train_ds = tf.data.Dataset.from_tensor_slices((data, former_grad, later_grad)).shuffle(shuffle_buffer_size).batch(batch_size)
+
     lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
         0.001,
         decay_steps=data.shape[0]//batch_size * 100,
         decay_rate=0.1,
         staircase=True)
-    
     model_appearance = convolutional_auto_encoder()
     model_motion1 = convolutional_auto_encoder()
     model_motion2 = convolutional_auto_encoder()
-    loss_object = tf.keras.losses.MSE
+    input_shape = (None, 64, 64, 1)
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
-    train_loss = tf.keras.metrics.Mean(name='train_loss')
-    loss_object2 = tf.keras.losses.MSE
+    optimizer1 = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
     optimizer2 = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
-    train_loss2 = tf.keras.metrics.Mean(name='train_loss')
-    loss_object3 = tf.keras.losses.MSE
-    optimizer3 = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
-    train_loss3 = tf.keras.metrics.Mean(name='train_loss')
     
-    EPOCHS = args.epoch
-    delta = 2
-    for epoch in range(EPOCHS):
+    for epoch in range(args.epoch):
         step = 0
+        loss_running = 0.
         loss1_running = 0.
         loss2_running = 0.
-        loss3_running = 0.
-        for img, former, later in train_ds:
+        for img, gradient1, gradient2 in train_ds:
             step += 1
-            loss1 = train_step1(model_appearance, train_loss, optimizer, img)
-            loss2 = train_step2(model_motion1, train_loss2, optimizer2, img - former)
-            loss3 = train_step3(model_motion2, train_loss3, optimizer3, later - img)
+            loss = train_step1(model_appearance, optimizer, img)
+            loss1 = train_step2(model_motion1, optimizer1, gradient1)
+            loss2 = train_step3(model_motion2, optimizer2, gradient2)
+            loss_running += loss.numpy()
             loss1_running += loss1.numpy()
             loss2_running += loss2.numpy()
-            loss3_running += loss3.numpy()
+        loss_running /= len(list(train_ds))
         loss1_running /= len(list(train_ds))
         loss2_running /= len(list(train_ds))
-        loss3_running /= len(list(train_ds))
-        print('epoch', epoch, 'loss1', loss1_running, 'loss2', loss2_running, 'loss3', loss3_running)
+        print('epoch', epoch, 'loss', loss_running, 'loss_gradient_former', loss1_running, 'loss_gradient_later', loss2_running)
         with open(os.path.join(args.result_directory, 'log'), 'a') as f:
-            f.write('epoch: ' + str(epoch) + ', loss1: ' + str(loss1_running) + ', loss2: ' + str(loss2_running) + ', loss3: ' + str(loss3_running) + '\n')
+            f.write('epoch: ' + str(epoch) + ', loss: ' + str(loss_running) + ', loss gradient former: ' +
+                    str(loss1_running) + ', loss gradient later: ' + str(loss2_running) + '\n')
     model_appearance.save_weights(os.path.join(args.result_directory, 'model_appearance.h5'))
     model_motion1.save_weights(os.path.join(args.result_directory, 'model_motion1.h5'))
     model_motion2.save_weights(os.path.join(args.result_directory, 'model_motion2.h5'))
