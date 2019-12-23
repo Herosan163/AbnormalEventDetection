@@ -8,6 +8,9 @@ import argparse
 from sklearn.cluster import KMeans
 from sklearn.svm import LinearSVC
 from joblib import dump, load
+from cyvlfeat.kmeans import kmeans, kmeans_quantize
+from sklearn.linear_model import SGDClassifier
+from sklearn.multiclass import OneVsRestClassifier
 
 tf.compat.v1.enable_eager_execution()
 
@@ -41,26 +44,48 @@ if __name__ == '__main__':
     model_appearance.load_weights(os.path.join(args.result_directory, 'model_appearance.h5'))
     model_motion1.load_weights(os.path.join(args.result_directory, 'model_motion1.h5'))
     model_motion2.load_weights(os.path.join(args.result_directory, 'model_motion2.h5'))
-    # img = Image.fromarray((data[0,:,:,0]*255).astype(np.uint8))
-    # img.save('input.png')    
-    # encode = model_appearance.extract_feature(data[0][None])
-    # decode = model_appearance.decode(encode).numpy()
-    # img = Image.fromarray((decode[0,:,:,0]*255).astype(np.uint8))
-    # img.save('decode.png')
-    features = []
-    for img, former, later in train_ds:
-        encode_appearance = model_appearance.extract_feature(img[None]).numpy()
-        encode_motion1 = model_motion1.extract_feature((img - former)[None]).numpy()
-        encode_motion2 = model_motion2.extract_feature((later - img)[None]).numpy()
-        feature = np.r_[encode_appearance.flatten(), encode_motion1.flatten(), encode_motion2.flatten()]
-        features.append(feature)
-    features = np.array(features)
-    np.save('features.npy', features)
-    # features = np.load('features.npy')
-    km = KMeans(n_clusters=n_clusters, init='k-means++', n_init=10)
-    pred_km = km.fit_predict(features)
+    # im = np.array(Image.open('input_gray.png'))
+    # former = np.array(Image.open('input_former.png'))
+    # later = np.array(Image.open('input_later.png'))
+    # img = tf.cast(tf.identity(np.expand_dims(im, axis=-1)), tf.float32)
+    # former = tf.cast(tf.identity(np.expand_dims(former, axis=-1)), tf.float32)
+    # later = tf.cast(tf.identity(np.expand_dims(later, axis=-1)), tf.float32)
+    # encode_appearance = model_appearance.extract_feature(img[None] / 255.0)
+    # encode_motion1 = model_motion1.extract_feature((former[None]-100) / 255.0)
+    # encode_motion2 = model_motion2.extract_feature((later[None]-100) / 255.0)
+    # decode_gray = model_appearance.decode(encode_appearance).numpy()
+    # img = Image.fromarray((decode_gray[0,:,:,0]*255).astype(np.uint8))
+    # img.save('decode_gray.png')
+    # decode_motion1 = model_motion1.decode(encode_motion1).numpy()
+    # img = Image.fromarray((decode_motion1[0,:,:,0]*255+100).astype(np.uint8))
+    # img.save('decode_motion1.png')
+    # decode_motion2 = model_motion1.decode(encode_motion2).numpy()
+    # img = Image.fromarray((decode_motion2[0,:,:,0]*255+100).astype(np.uint8))
+    # img.save('decode_motion2.png')
+
+    # features = []
+    # for img, former, later in train_ds:
+    #     encode_appearance = model_appearance.extract_feature(img[None]).numpy()
+    #     encode_motion1 = model_motion1.extract_feature((img - former)[None]).numpy()
+    #     encode_motion2 = model_motion2.extract_feature((later - img)[None]).numpy()
+    #     feature = np.r_[encode_appearance.flatten(), encode_motion1.flatten(), encode_motion2.flatten()]
+    #     features.append(feature)
+    # features = np.array(features)
+    # np.save('features.npy', features)
+    features = np.load('features.npy')
+    # km = KMeans(n_clusters=n_clusters, init='k-means++', n_init=10)
+    # pred_km = km.fit_predict(features)
+    centers = kmeans(features, num_centers=n_clusters, initialization='PLUSPLUS', num_repetitions=10,
+                   max_num_comparisons=100, max_num_iterations=100, algorithm='LLOYD', num_trees=3)
+    pred_km = kmeans_quantize(features, centers)
     np.save('pred_km.npy', pred_km)
+    sparse_labels = np.eye(n_clusters)[pred_km]
+    sparse_labels = (sparse_labels - 0.5) * 2
     # pred_km = np.load('pred_km.npy')
-    clf = LinearSVC(C=1.0, multi_class='ovr', max_iter=100000, loss='hinge')
-    clf.fit(features, pred_km)
-    dump(clf, os.path.join(args.result_directory, 'svm.pickle'))
+    base_estimizer = SGDClassifier(max_iter=10000, warm_start=True, loss='hinge', early_stopping=True, n_iter_no_change=50, l1_ratio=0)
+    ovr_classifier = OneVsRestClassifier(base_estimizer)
+    ovr_classifier.fit(features, sparse_labels)
+
+    # clf = LinearSVC(C=1.0, multi_class='ovr', max_iter=100000, loss='hinge')
+    # clf.fit(features, pred_km)
+    dump(ovr_classifier, os.path.join(args.result_directory, 'svm.pickle'))
