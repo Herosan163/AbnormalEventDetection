@@ -150,13 +150,13 @@ if __name__ == '__main__':
     threshold = 0.5
     batch_size = 64
     shuffle_buffer_size = 100
-    data, data_former, data_later = create_dataset(threshold)
+    # data, data_former, data_later = create_dataset(threshold)
     # np.save('data.npy', data)
     # np.save('data_former.npy', data_former)
     # np.save('data_later.npy', data_later)
-    # data = np.load('data.npy')
-    # data_former = np.load('data_former.npy')
-    # data_later = np.load('data_later.npy')
+    data = np.load('data.npy')
+    data_former = np.load('data_former.npy')
+    data_later = np.load('data_later.npy')
     data, former_grad, later_grad = create_gradient(data, data_former, data_later)
     data = np.expand_dims(data, axis=-1)
     former_grad = np.expand_dims(former_grad, axis=-1)
@@ -171,13 +171,29 @@ if __name__ == '__main__':
         decay_steps=data.shape[0]//batch_size * 100,
         decay_rate=0.1,
         staircase=True)
-    model_appearance = convolutional_auto_encoder()
-    model_motion1 = convolutional_auto_encoder()
-    model_motion2 = convolutional_auto_encoder()
-    input_shape = (None, 64, 64, 1)
+    lr_schedule1 = tf.keras.optimizers.schedules.ExponentialDecay(
+        0.001,
+        decay_steps=data.shape[0]//batch_size * 100,
+        decay_rate=0.1,
+        staircase=True)
+    lr_schedule2 = tf.keras.optimizers.schedules.ExponentialDecay(
+        0.001,
+        decay_steps=data.shape[0]//batch_size * 100,
+        decay_rate=0.1,
+        staircase=True)
+    model_appearance = convolutional_auto_encoder(name='appearance')
+    model_motion1 = convolutional_auto_encoder(name='motion1')
+    model_motion2 = convolutional_auto_encoder(name='motion2')
+    # input_shape = (None, 64, 64, 1)
+    # model_appearance.build(input_shape)
+    # model_motion1.build(input_shape)
+    # model_motion2.build(input_shape)
+    # model_appearance.load_weights('result/012/model_appearance_epoch24.h5')
+    # model_motion1.load_weights('result/012/model_motion1_epoch24.h5')
+    # model_motion2.load_weights('result/012/model_motion2_epoch24.h5')
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
-    optimizer1 = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
-    optimizer2 = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
+    optimizer1 = tf.keras.optimizers.Adam(learning_rate=lr_schedule1)
+    optimizer2 = tf.keras.optimizers.Adam(learning_rate=lr_schedule2)
     
     for epoch in range(args.epoch):
         step = 0
@@ -199,6 +215,7 @@ if __name__ == '__main__':
         with open(os.path.join(args.result_directory, 'log'), 'a') as f:
             f.write('epoch: ' + str(epoch) + ', loss: ' + str(loss_running) + ', loss gradient former: ' +
                     str(loss1_running) + ', loss gradient later: ' + str(loss2_running) + '\n')
-    model_appearance.save_weights(os.path.join(args.result_directory, 'model_appearance.h5'))
-    model_motion1.save_weights(os.path.join(args.result_directory, 'model_motion1.h5'))
-    model_motion2.save_weights(os.path.join(args.result_directory, 'model_motion2.h5'))
+        if (epoch + 1) % 25 == 0:
+            model_appearance.save_weights(os.path.join(args.result_directory, 'model_appearance_epoch%d.h5' % (epoch)))
+            model_motion1.save_weights(os.path.join(args.result_directory, 'model_motion1_epoch%d.h5' % (epoch)))
+            model_motion2.save_weights(os.path.join(args.result_directory, 'model_motion2_epoch%d.h5' % (epoch)))
